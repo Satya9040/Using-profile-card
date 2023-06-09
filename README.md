@@ -1,6 +1,6 @@
 Welcome to  Using-profile-card Project.
 plse click on the belowlink for live demo : -
- file:///E:/front-end-dev/front/using-profile-card/index.html
+ https://github.com/Satya9040/Using-profile-card.git
  
 
 Thanks for visitimng !
