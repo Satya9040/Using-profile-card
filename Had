@@ -1,0 +1,176 @@
+
+- name: "1.4.2 |  Ensure ptrace_scope is restricted"
+  notify: Reload_sysctl
+  block:
+    - name: Ensure ptrace_scope is restricted | Set file
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.d/60-kernel_sysctl.conf
+        regexp: kernel.yama.ptrace_scope
+        line: kernel.yama.ptrace_scope = 1
+        create: true
+        mode: 'go-wx'
+
+    - name: Ensure ptrace_scope is restricted | comment out other entry
+      ansible.builtin.lineinfile:
+        path: /lib/sysctl.d/10-default-yama-scope.conf
+        backrefs: true
+        regexp: ^(\s*kernel.yama.ptrace_scope.*)
+        line: '# \1'
+        create: true
+        mode: 'go-wx'
+
+
+############
+- name: "2.2.22 Ensure only approved services are listening on a network interface"
+  debug:
+    msg: 'We have already implemented disabling services in Script prev_hardening_script@Mcx - Discussed with infra'
+
+- name: "2.2.21 | Ensure mail transfer agents are configured for local-only mode"
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: "^(#)?inet_interfaces"
+    line: "inet_interfaces = loopback-only"
+  notify: Restart_postfix
+
+
+##############################
+- name: "4.4.2.1.3 | PATCH | Ensure password unlock time is configured properly with correct ordering and options"
+  block:
+    - name: "Backup system-auth and password-auth before changes"
+      copy:
+        src: "/etc/pam.d/{{ item }}"
+        dest: "/etc/pam.d/{{ item }}.bak_{{ ansible_date_time.iso8601 }}"
+        backup: yes
+      loop:
+        - system-auth
+        - password-auth
+
+    - name: "Ensure pam_faillock's preauth line with proper params just after auth required pam_env.so"
+      lineinfile:
+        path: "/etc/pam.d/{{ item }}"
+        regexp: '^auth\s+required\s+pam_faillock.so\s+preauth.*$'
+        line: "auth required pam_faillock.so preauth silent audit deny=5 unlock_time=900 even_deny_root"
+        insertafter: '^auth\s+required\s+pam_env.so'
+        create: yes
+        backup: yes
+      loop:
+        - system-auth
+        - password-auth
+
+    - name: "Ensure pam_faillock's authfail line with proper params after last password validation module"
+      blockinfile:
+        path: "/etc/pam.d/{{ item }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK pam_faillock authfail"
+        insertafter: '^auth\s+requisite\s+pam_succeed_if.so.*$'
+        block: |
+          auth [default=die] pam_faillock.so authfail audit deny=5 unlock_time=900 even_deny_root
+      loop:
+        - system-auth
+        - password-auth
+
+#######
+- name: "4.4.2.2.2 Ensure password number of changed characters is configured"
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: ^(?i)(#|)\s*difok
+    line: "difok = {{ rhel7cis_pwquality_difok }}"
+
+#############
+- name: "4.4.2.2.5 Ensure password same consecutive characters is configured"
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: ^(?i)(#|)\s*maxrepeat
+    line: "maxrepeat = {{ rhel7cis_pwquality_maxrepeat }}"
+###############
+- name: "4.4.2.2.6  Ensure password maximum sequential characters is configured"
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: ^(?i)(#|)\s*maxsequence
+    line: "maxsequence = {{ rhel7cis_pwquality_maxsequence }}"
+
+#####################
+- name: "4.4.2.3.1 | Ensure pam_pwhistory module is enabled in password-auth"
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/password-auth
+    regexp: '^password\s+required\s+pam_pwhistory\.so'
+    line: 'password    required    pam_pwhistory.so use_authtok remember=5 enforce_for_root'
+    insertafter: '^password.*pam_unix\.so'
+    state: present
+
+- name: "Backup password-auth before enabling pam_pwhistory"
+  ansible.builtin.copy:
+    src: /etc/pam.d/password-auth
+    dest: "/etc/pam.d/password-auth.bak.{{ ansible_date_time.iso8601_basic }}"
+    remote_src: yes
+    mode: '0600'
+
+###############
+- name: "4.4.2.3.2 | Ensure password history remember is configured in system-auth"
+  ansible.builtin.replace:
+    path: /etc/pam.d/system-auth
+    regexp: '(password\s+required\s+pam_pwhistory\.so.*)remember=\d+'
+    replace: '\1remember=5'
+
+- name: "Backup password-auth before configuring password history remember"
+  ansible.builtin.copy:
+    src: /etc/pam.d/password-auth
+    dest: "/etc/pam.d/password-auth.bak.{{ ansible_date_time.iso8601_basic }}"
+    remote_src: yes
+    mode: '0600'
+
+###############
+- name: "4.4.2.3.3 | Ensure password history is enforced for the root user in password-auth"
+  ansible.builtin.replace:
+    path: /etc/pam.d/password-auth
+    regexp: '(password\s+required\s+pam_pwhistory\.so.*)enforce_for_root'
+    replace: '\1enforce_for_root'
+#############
+- name: "4.4.2.3.4 | Ensure pam_pwhistory includes use_authtok in system-auth"
+  ansible.builtin.replace:
+    path: /etc/pam.d/system-auth
+    regexp: '(password\s+required\s+pam_pwhistory\.so.*)use_authtok'
+    replace: '\1use_authtok'
+
+- name: "4.4.2.3.4.1 Backup password-auth before ensuring use_authtok"
+  ansible.builtin.copy:
+    src: /etc/pam.d/password-auth
+    dest: "/etc/pam.d/password-auth.bak.{{ ansible_date_time.iso8601_basic }}"
+    remote_src: yes
+    mode: '0600'
+
+- name: "4.4.2.3.4 | Ensure pam_pwhistory includes use_authtok in password-auth"
+  ansible.builtin.replace:
+    path: /etc/pam.d/password-auth
+    regexp: '(password\s+required\s+pam_pwhistory\.so.*)use_authtok'
+    replace: '\1use_authtok'
+
+########################
+- name: "4.5.2.2 | Ensure root user umask is configured"
+  ansible.builtin.lineinfile:
+    path: /root/.bash_profile
+    regexp: \s*umask
+    line: "umask 0027"
+
+- name: "4.5.2.2 | Ensure root user umask is configured"
+  ansible.builtin.lineinfile:
+    path: /root/.bashrc
+    regexp: \s*umask
+    line: "umask 0027"
+###########
+- name: "4.5.3.3 | PATCH | Ensure default user umask is configured"
+  ansible.builtin.replace:
+      path: "{{ item.path }}"
+      regexp: (?i)(umask\s+\d\d\d)
+      replace: '{{ item.line }} 027'
+  loop:
+      - { path: '/etc/bashrc', line: 'umask' }
+      - { path: '/etc/profile', line: 'umask' }
+      - { path: '/etc/login.defs', line: 'UMASK' }
+#########
+
+- name: 4.2.3 Ensure permissions on all logfiles are configured (Automated)
+  shell: |
+    find /var/log/ -type f -perm /g+wx,o+rwx -exec chmod --changes g-wx,o-rwx "{}" +
+
+
+[root@dcansible mcx_linux_hardening_V1]# timed out waiting for input: auto-logout
